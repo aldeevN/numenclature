@@ -1,4 +1,4 @@
-import { useState, ChangeEvent } from 'react';
+import { useState, ChangeEvent, useEffect, useMemo } from 'react';
 
 interface FieldValues {
   name: string;
@@ -11,7 +11,7 @@ interface ModelYearPair {
   yearFrom: string;
   yearTo: string;
   id: string;
-  keepUppercase?: boolean; // Флаг для сохранения заглавных букв
+  keepUppercase?: boolean;
 }
 
 interface ValidationErrors {
@@ -19,26 +19,35 @@ interface ValidationErrors {
   yearTo?: string;
 }
 
-// Интерфейс для спецификации масла
 interface OilSpecification {
-  type: string; // Моторное, трансмиссионное и т.д.
-  brand: string; // HYUNDAI/XTeer и т.д.
-  viscosity: string; // 15w40, 5w30 и т.д.
-  specification: string; // HD 7000 CI-4 и т.д.
-  volume: string; // 1л, 4л, 5л и т.д.
+  type: string;
+  brand: string;
+  viscosity: string;
+  specification: string;
+  volume: string;
+}
+
+interface HistoryItem {
+  id: string;
+  timestamp: number;
+  result: string;
+  mode: 'parts' | 'oils';
+  data: {
+    fields: FieldValues;
+    modelYearPairs?: ModelYearPair[];
+    oilSpec?: OilSpecification;
+  };
 }
 
 export default function App() {
-  const [mode, setMode] = useState<'parts' | 'oils'>('parts'); // Режим работы: parts или oils
+  const [mode, setMode] = useState<'parts' | 'oils'>('parts');
   const [fields, setFields] = useState<FieldValues>({
     name: '',
     brand: '',
   });
-
   const [modelYearPairs, setModelYearPairs] = useState<ModelYearPair[]>([
     { carBrand: '', model: '', yearFrom: '', yearTo: '', id: Date.now().toString() + '-0', keepUppercase: false }
   ]);
-
   const [oilSpec, setOilSpec] = useState<OilSpecification>({
     type: 'Моторное',
     brand: 'HYUNDAI/XTeer',
@@ -46,15 +55,141 @@ export default function App() {
     specification: 'HD 7000 CI-4',
     volume: '1л'
   });
-
   const [validationErrors, setValidationErrors] = useState<Record<string, ValidationErrors>>({});
   const [copySuccess, setCopySuccess] = useState<string>('');
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [showAutocomplete, setShowAutocomplete] = useState<{
+    field: string;
+    values: string[];
+    position: { top: number; left: number };
+  } | null>(null);
 
-  // Функция для форматирования: первое слово - с заглавной буквы, остальные - как введены
+  // Загружаем историю из localStorage при загрузке
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('carPartsHistory');
+    if (savedHistory) {
+      try {
+        const parsedHistory = JSON.parse(savedHistory);
+        // Сортируем по времени (новые сверху)
+        const sortedHistory = parsedHistory.sort((a: HistoryItem, b: HistoryItem) => b.timestamp - a.timestamp);
+        setHistory(sortedHistory);
+      } catch (error) {
+        console.error('Ошибка загрузки истории:', error);
+      }
+    }
+  }, []);
+
+  // Сохраняем историю в localStorage при изменении
+  useEffect(() => {
+    if (history.length > 0) {
+      localStorage.setItem('carPartsHistory', JSON.stringify(history));
+    }
+  }, [history]);
+
+  // Функция для добавления результата в историю
+  const addToHistory = (result: string) => {
+    if (!result || result === 'Пожалуйста, исправьте ошибки валидации') {
+      return;
+    }
+
+    const newHistoryItem: HistoryItem = {
+      id: Date.now().toString(),
+      timestamp: Date.now(),
+      result,
+      mode,
+      data: {
+        fields: { ...fields },
+        modelYearPairs: mode === 'parts' ? [...modelYearPairs] : undefined,
+        oilSpec: mode === 'oils' ? { ...oilSpec } : undefined
+      }
+    };
+
+    setHistory(prev => {
+      const newHistory = [newHistoryItem, ...prev];
+      // Ограничиваем историю 50 записями
+      return newHistory.slice(0, 50);
+    });
+  };
+
+  // Функция для применения истории к текущим полям
+  const applyHistoryItem = (item: HistoryItem) => {
+    setMode(item.mode);
+    
+    if (item.data.fields) {
+      setFields(item.data.fields);
+    }
+    
+    if (item.mode === 'parts' && item.data.modelYearPairs) {
+      setModelYearPairs(item.data.modelYearPairs);
+    }
+    
+    if (item.mode === 'oils' && item.data.oilSpec) {
+      setOilSpec(item.data.oilSpec);
+    }
+    
+    setShowHistory(false);
+  };
+
+  // Функция для очистки истории
+  const clearHistory = () => {
+    if (confirm('Вы уверены, что хотите очистить всю историю?')) {
+      setHistory([]);
+      localStorage.removeItem('carPartsHistory');
+    }
+  };
+
+  // Получаем уникальные значения для автозаполнения из истории
+  const autocompleteValues = useMemo(() => {
+    const values: Record<string, Set<string>> = {
+      name: new Set(),
+      brand: new Set(),
+      carBrand: new Set(),
+      model: new Set(),
+      oilType: new Set(),
+      oilBrand: new Set(),
+      oilViscosity: new Set(),
+      oilSpecification: new Set(),
+      oilVolume: new Set()
+    };
+
+    history.forEach(item => {
+      if (item.data.fields.name) values.name.add(item.data.fields.name);
+      if (item.data.fields.brand) values.brand.add(item.data.fields.brand);
+      
+      if (item.mode === 'parts' && item.data.modelYearPairs) {
+        item.data.modelYearPairs.forEach(pair => {
+          if (pair.carBrand) values.carBrand.add(pair.carBrand);
+          if (pair.model) values.model.add(pair.model);
+        });
+      }
+      
+      if (item.mode === 'oils' && item.data.oilSpec) {
+        const { type, brand, viscosity, specification, volume } = item.data.oilSpec;
+        if (type) values.oilType.add(type);
+        if (brand) values.oilBrand.add(brand);
+        if (viscosity) values.oilViscosity.add(viscosity);
+        if (specification) values.oilSpecification.add(specification);
+        if (volume) values.oilVolume.add(volume);
+      }
+    });
+
+    // Преобразуем Set в массивы и фильтруем пустые значения
+    const result: Record<string, string[]> = {};
+    Object.keys(values).forEach(key => {
+      const arr = Array.from(values[key as keyof typeof values]).filter(val => val.trim() !== '');
+      if (arr.length > 0) {
+        result[key] = arr;
+      }
+    });
+
+    return result;
+  }, [history]);
+
+  // Функция для форматирования
   const capitalizeWords = (str: string): string => {
     if (str.length === 0) return str;
     
-    // Разделяем строку на слова, сохраняя пробелы
     const words = str.split(' ');
     const result: string[] = [];
     
@@ -66,10 +201,8 @@ export default function App() {
       }
       
       if (i === 0) {
-        // Первое слово: делаем первую букву заглавной, остальные как есть
         result.push(word.charAt(0).toUpperCase() + word.slice(1));
       } else {
-        // Все остальные слова оставляем как есть
         result.push(word);
       }
     }
@@ -77,53 +210,89 @@ export default function App() {
     return result.join(' ');
   };
 
-  // Функция для форматирования марки авто
   const formatCarBrand = (str: string, keepUppercase: boolean = false): string => {
     if (str.length === 0) return str;
     
     if (keepUppercase) {
-      // Если установлен флаг keepUppercase, оставляем все как есть (удаляем только лишние пробелы)
-      return str
-        .trim()
-        .replace(/\s{2,}/g, ' ');
+      return str.trim().replace(/\s{2,}/g, ' ');
     }
     
-    // Обычное форматирование: первая буква заглавная, остальные строчные
     return str
       .trim()
       .split(' ')
       .filter(word => word.length > 0)
       .map((word, index) => {
         if (index === 0) {
-          // Первое слово: первая буква заглавная, остальные строчные
           return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
         }
-        // Остальные слова оставляем как есть (для случаев типа "BMW M")
         return word;
       })
       .join(' ');
   };
 
-  // Функция для автоматической коррекции ввода (только первое слово с заглавной буквы)
   const formatFieldValue = (value: string): string => {
     return capitalizeWords(value);
   };
 
-  const handleChange = (field: keyof FieldValues, value: string) => {
-    // Удаляем двойные пробелы при вводе
+  const handleChange = (field: keyof FieldValues, value: string, event?: ChangeEvent<HTMLInputElement>) => {
     const singleSpacedValue = value.replace(/\s{2,}/g, ' ');
     const formattedValue = formatFieldValue(singleSpacedValue);
     setFields(prev => ({ ...prev, [field]: formattedValue }));
+    
+    // Показываем автозаполнение если есть совпадения
+    if (event && value.trim() !== '') {
+      const fieldKey = field === 'name' ? 'name' : 'brand';
+      const suggestions = autocompleteValues[fieldKey]?.filter(v => 
+        v.toLowerCase().includes(value.toLowerCase())
+      ).slice(0, 5);
+      
+      if (suggestions && suggestions.length > 0) {
+        const inputRect = event.target.getBoundingClientRect();
+        setShowAutocomplete({
+          field: fieldKey,
+          values: suggestions,
+          position: {
+            top: inputRect.bottom + window.scrollY,
+            left: inputRect.left + window.scrollX
+          }
+        });
+      } else {
+        setShowAutocomplete(null);
+      }
+    } else {
+      setShowAutocomplete(null);
+    }
   };
 
-  // Обработчики для спецификации масла
-  const handleOilSpecChange = (field: keyof OilSpecification, value: string) => {
-    // Удаляем двойные пробелы при вводе
+  const handleOilSpecChange = (field: keyof OilSpecification, value: string, event?: ChangeEvent<HTMLInputElement>) => {
     const singleSpacedValue = value.replace(/\s{2,}/g, ' ');
     setOilSpec(prev => ({ ...prev, [field]: singleSpacedValue }));
+    
+    // Показываем автозаполнение если есть совпадения
+    if (event && value.trim() !== '') {
+      const fieldKey = `oil${field.charAt(0).toUpperCase() + field.slice(1)}`;
+      const suggestions = autocompleteValues[fieldKey]?.filter(v => 
+        v.toLowerCase().includes(value.toLowerCase())
+      ).slice(0, 5);
+      
+      if (suggestions && suggestions.length > 0) {
+        const inputRect = event.target.getBoundingClientRect();
+        setShowAutocomplete({
+          field: fieldKey,
+          values: suggestions,
+          position: {
+            top: inputRect.bottom + window.scrollY,
+            left: inputRect.left + window.scrollX
+          }
+        });
+      } else {
+        setShowAutocomplete(null);
+      }
+    } else {
+      setShowAutocomplete(null);
+    }
   };
 
-  // Валидация года (4 или 2 цифры)
   const validateYear = (year: string): string | null => {
     if (year.trim() === '') return null;
     
@@ -144,7 +313,6 @@ export default function App() {
     return null;
   };
 
-  // Форматирование года для отображения (всегда последние 2 цифры)
   const formatYearForDisplay = (year: string): string => {
     if (year.trim() === '') return '';
     
@@ -155,22 +323,62 @@ export default function App() {
     return trimmedYear;
   };
 
-  const handleModelChange = (id: string, field: 'carBrand' | 'model' | 'yearFrom' | 'yearTo', value: string) => {
+  const handleModelChange = (id: string, field: 'carBrand' | 'model' | 'yearFrom' | 'yearTo', value: string, event?: ChangeEvent<HTMLInputElement>) => {
     let formattedValue = value;
     
-    // Форматируем только текстовые поля
     if (field === 'carBrand') {
-      // Для марки авто: форматируем в зависимости от флага keepUppercase
       const singleSpacedValue = value.replace(/\s{2,}/g, ' ');
       const pair = modelYearPairs.find(p => p.id === id);
       formattedValue = formatCarBrand(singleSpacedValue, pair?.keepUppercase);
+      
+      // Показываем автозаполнение если есть совпадения
+      if (event && value.trim() !== '' && field === 'carBrand') {
+        const suggestions = autocompleteValues.carBrand?.filter(v => 
+          v.toLowerCase().includes(value.toLowerCase())
+        ).slice(0, 5);
+        
+        if (suggestions && suggestions.length > 0) {
+          const inputRect = event.target.getBoundingClientRect();
+          setShowAutocomplete({
+            field: 'carBrand',
+            values: suggestions,
+            position: {
+              top: inputRect.bottom + window.scrollY,
+              left: inputRect.left + window.scrollX
+            }
+          });
+        } else {
+          setShowAutocomplete(null);
+        }
+      }
     } else if (field === 'model') {
-      // Для модели: только первое слово с заглавной буквы
       const singleSpacedValue = value.replace(/\s{2,}/g, ' ');
       formattedValue = formatFieldValue(singleSpacedValue);
+      
+      // Показываем автозаполнение если есть совпадения
+      if (event && value.trim() !== '' && field === 'model') {
+        const suggestions = autocompleteValues.model?.filter(v => 
+          v.toLowerCase().includes(value.toLowerCase())
+        ).slice(0, 5);
+        
+        if (suggestions && suggestions.length > 0) {
+          const inputRect = event.target.getBoundingClientRect();
+          setShowAutocomplete({
+            field: 'model',
+            values: suggestions,
+            position: {
+              top: inputRect.bottom + window.scrollY,
+              left: inputRect.left + window.scrollX
+            }
+          });
+        } else {
+          setShowAutocomplete(null);
+        }
+      }
+    } else {
+      setShowAutocomplete(null);
     }
     
-    // Валидация для годов
     if (field === 'yearFrom' || field === 'yearTo') {
       const error = validateYear(value);
       setValidationErrors(prev => ({
@@ -189,7 +397,6 @@ export default function App() {
     );
   };
 
-  // Функция для переключения режима CAPS для марки авто
   const toggleUppercaseMode = (id: string) => {
     setModelYearPairs(prev => 
       prev.map(pair => 
@@ -197,7 +404,6 @@ export default function App() {
           ? { 
               ...pair, 
               keepUppercase: !pair.keepUppercase,
-              // При переключении переформатируем текущее значение
               carBrand: formatCarBrand(pair.carBrand, !pair.keepUppercase)
             } 
           : pair
@@ -215,7 +421,6 @@ export default function App() {
   const removeModelYearPair = (id: string) => {
     if (modelYearPairs.length > 1) {
       setModelYearPairs(prev => prev.filter(pair => pair.id !== id));
-      // Удаляем ошибки валидации для удаленной пары
       setValidationErrors(prev => {
         const newErrors = { ...prev };
         delete newErrors[id];
@@ -224,19 +429,19 @@ export default function App() {
     }
   };
 
-  // Функция для копирования текста в буфер обмена
   const copyToClipboard = async () => {
     if (!concatenatedResult || concatenatedResult === 'Пожалуйста, исправьте ошибки валидации') {
       return;
     }
     
     try {
-      // Удаляем двойные пробелы перед копированием
       const cleanedResult = concatenatedResult.replace(/\s{2,}/g, ' ');
       await navigator.clipboard.writeText(cleanedResult);
       setCopySuccess('Скопировано в буфер обмена!');
       
-      // Сбрасываем уведомление через 2 секунды
+      // Добавляем в историю после копирования
+      addToHistory(cleanedResult);
+      
       setTimeout(() => {
         setCopySuccess('');
       }, 2000);
@@ -250,21 +455,17 @@ export default function App() {
     }
   };
 
-  // Функция для удаления двойных пробелов в строке
   const removeDoubleSpaces = (str: string): string => {
     return str.replace(/\s{2,}/g, ' ').trim();
   };
 
-  // Group by carBrand and format - для режима запчастей
   const formatModelYearPairs = () => {
-    // Filter out pairs where both carBrand and model are empty
     const validPairs = modelYearPairs.filter(pair => 
       removeDoubleSpaces(pair.carBrand) !== '' || removeDoubleSpaces(pair.model) !== ''
     );
     
     if (validPairs.length === 0) return '';
     
-    // Group pairs by carBrand
     const groupedByBrand: Record<string, Array<{
       model: string, 
       yearFrom: string, 
@@ -274,7 +475,6 @@ export default function App() {
     }>> = {};
     
     validPairs.forEach(pair => {
-      // Удаляем двойные пробелы и обрезаем
       const carBrand = removeDoubleSpaces(pair.carBrand);
       const model = removeDoubleSpaces(pair.model);
       
@@ -291,7 +491,6 @@ export default function App() {
           originalYearTo: pair.yearTo
         });
       } else {
-        // Если модель пустая, добавляем пустую модель для отображения только марки
         groupedByBrand[brand].push({
           model: '',
           yearFrom: formatYearForDisplay(pair.yearFrom),
@@ -302,22 +501,17 @@ export default function App() {
       }
     });
 
-    // Format each brand group
     const result: string[] = [];
     
     Object.entries(groupedByBrand).forEach(([brand, models]) => {
-      // Filter out empty models
       const nonEmptyModels = models.filter(m => m.model !== '');
       
       if (nonEmptyModels.length === 0 && brand !== '') {
-        // Если есть только марка без моделей
         result.push(brand);
       } else if (nonEmptyModels.length > 0) {
-        // Format each model for this brand
         const formattedModels = nonEmptyModels.map(modelData => {
           const { model: modelName, yearFrom, yearTo } = modelData;
           
-          // Проверяем есть ли ошибки валидации для этой модели
           const hasErrors = nonEmptyModels.some(m => 
             (m.originalYearFrom && validateYear(m.originalYearFrom)) || 
             (m.originalYearTo && validateYear(m.originalYearTo))
@@ -338,7 +532,6 @@ export default function App() {
           }
         });
         
-        // Join models and prepend brand if there are multiple models or multiple brands
         const hasMultipleBrands = Object.keys(groupedByBrand).length > 1;
         const hasMultipleModels = nonEmptyModels.length > 1;
         
@@ -349,7 +542,6 @@ export default function App() {
             result.push(formattedModels.join(', '));
           }
         } else {
-          // Single brand, single model
           if (brand) {
             result.push(`${brand} ${formattedModels[0]}`);
           } else {
@@ -362,7 +554,6 @@ export default function App() {
     return result.join(', ');
   };
 
-  // Форматирование спецификации масла для результата
   const formatOilSpecification = (): string => {
     const parts: string[] = [];
     
@@ -376,30 +567,12 @@ export default function App() {
     return parts.join(' ');
   };
 
-  // Get unique car brands for display in concatenated result
-  const getCarBrandForConcatenation = () => {
-    const uniqueBrands = Array.from(new Set(
-      modelYearPairs
-        .map(pair => removeDoubleSpaces(pair.carBrand))
-        .filter(brand => brand !== '')
-    ));
-
-    if (uniqueBrands.length === 1) {
-      return uniqueBrands[0];
-    } else if (uniqueBrands.length > 1) {
-      return ''; // Multiple brands will be shown in formatModelYearPairs
-    }
-    return '';
-  };
-
-  // Проверяем есть ли ошибки валидации во всех полях
   const hasValidationErrors = () => {
     return Object.values(validationErrors).some(errorObj => 
       Object.values(errorObj).some(error => error !== undefined)
     );
   };
 
-  // Modified concatenation logic for parts mode
   const concatenatedResultForParts = () => {
     if (hasValidationErrors()) {
       return 'Пожалуйста, исправьте ошибки валидации';
@@ -407,14 +580,12 @@ export default function App() {
     
     const parts: string[] = [];
     
-    // Удаляем двойные пробелы и обрезаем
     const name = removeDoubleSpaces(fields.name);
     const brand = removeDoubleSpaces(fields.brand);
     
     if (name) parts.push(name);
     if (brand) parts.push(`"${brand}"`);
     
-    // Add model year pairs
     const modelYearStr = formatModelYearPairs();
     
     if (modelYearStr) {
@@ -424,42 +595,35 @@ export default function App() {
     return removeDoubleSpaces(parts.join(' '));
   };
 
-  // Concatenation logic for oils mode
   const concatenatedResultForOils = () => {
     const parts: string[] = [];
     
-    // Удаляем двойные пробелы и обрезаем
     const name = removeDoubleSpaces(fields.name);
     const brand = removeDoubleSpaces(fields.brand);
     
     if (name) parts.push(name);
     if (brand) parts.push(`"${brand}"`);
     
-    // Добавляем спецификацию масла
     const oilSpecStr = formatOilSpecification();
     if (oilSpecStr) parts.push(oilSpecStr);
     
     return removeDoubleSpaces(parts.join(' '));
   };
 
-  // Общий результат в зависимости от режима
   const concatenatedResult = mode === 'parts' 
     ? concatenatedResultForParts()
     : concatenatedResultForOils();
 
-  // Функция для подсветки двойных пробелов в результате
   const highlightDoubleSpaces = (text: string) => {
     if (!text) return text;
     
-    // Находим все двойные пробелы и заменяем их на подсвеченную версию
     const parts = text.split(/(\s{2,})/g);
     
     return parts.map((part, index) => {
       if (/\s{2,}/.test(part)) {
-        // Подсвечиваем двойные пробелы красным фоном
         return (
           <span key={index} className="bg-red-200 text-red-800 px-1 rounded">
-            {part.replace(/ /g, '•')} {/* Заменяем пробелы на видимые символы */}
+            {part.replace(/ /g, '•')}
           </span>
         );
       }
@@ -467,7 +631,6 @@ export default function App() {
     });
   };
 
-  // Проверяем есть ли двойные пробелы в результате
   const hasDoubleSpaces = concatenatedResult && /\s{2,}/.test(concatenatedResult);
 
   const fieldConfigs = [
@@ -475,7 +638,6 @@ export default function App() {
     { id: 'brand', label: 'Брэнд', key: 'brand' as const },
   ];
 
-  // Конфигурация для полей спецификации масла
   const oilSpecConfigs = [
     { id: 'oil-type', label: 'Тип масла', key: 'type' as const, placeholder: 'Например: Моторное, Трансмиссионное' },
     { id: 'oil-brand', label: 'Брэнд масла', key: 'brand' as const, placeholder: 'Например: HYUNDAI/XTeer' },
@@ -484,47 +646,176 @@ export default function App() {
     { id: 'oil-volume', label: 'Объем', key: 'volume' as const, placeholder: 'Например: 1л, 4л, 5л' },
   ];
 
+  // Функция для выбора значения из автозаполнения
+  const handleAutocompleteSelect = (value: string) => {
+    if (!showAutocomplete) return;
+
+    switch (showAutocomplete.field) {
+      case 'name':
+        setFields(prev => ({ ...prev, name: value }));
+        break;
+      case 'brand':
+        setFields(prev => ({ ...prev, brand: value }));
+        break;
+      case 'carBrand':
+        setModelYearPairs(prev => 
+          prev.map(pair => 
+            pair.id === modelYearPairs[0].id ? { ...pair, carBrand: value } : pair
+          )
+        );
+        break;
+      case 'model':
+        setModelYearPairs(prev => 
+          prev.map(pair => 
+            pair.id === modelYearPairs[0].id ? { ...pair, model: value } : pair
+          )
+        );
+        break;
+      case 'oilType':
+        setOilSpec(prev => ({ ...prev, type: value }));
+        break;
+      case 'oilBrand':
+        setOilSpec(prev => ({ ...prev, brand: value }));
+        break;
+      case 'oilViscosity':
+        setOilSpec(prev => ({ ...prev, viscosity: value }));
+        break;
+      case 'oilSpecification':
+        setOilSpec(prev => ({ ...prev, specification: value }));
+        break;
+      case 'oilVolume':
+        setOilSpec(prev => ({ ...prev, volume: value }));
+        break;
+    }
+
+    setShowAutocomplete(null);
+  };
+
+  // Закрываем автозаполнение при клике вне его
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setShowAutocomplete(null);
+    };
+
+    document.addEventListener('click', handleClickOutside);
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, []);
+
   return (
     <div className="size-full flex items-center justify-center bg-gray-50 p-8">
       <div className="w-full max-w-6xl bg-white rounded-lg shadow-lg p-8">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-2xl font-bold">Car Parts Data Concatenator</h1>
           
-          {/* Переключатель режимов */}
-          <div className="flex items-center space-x-2">
-            <span className="text-sm font-medium text-gray-700 mr-2">Режим:</span>
-            <div className="inline-flex rounded-md shadow-sm" role="group">
-              <button
-                type="button"
-                onClick={() => setMode('parts')}
-                className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${
-                  mode === 'parts'
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                Запчасти
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode('oils')}
-                className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${
-                  mode === 'oils'
-                    ? 'bg-blue-600 text-white border-blue-600'
-                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                Масла
-              </button>
+          <div className="flex items-center space-x-4">
+            <button
+              type="button"
+              onClick={() => setShowHistory(!showHistory)}
+              className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              История ({history.length})
+            </button>
+            
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-medium text-gray-700 mr-2">Режим:</span>
+              <div className="inline-flex rounded-md shadow-sm" role="group">
+                <button
+                  type="button"
+                  onClick={() => setMode('parts')}
+                  className={`px-4 py-2 text-sm font-medium rounded-l-lg border ${
+                    mode === 'parts'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  Запчасти
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('oils')}
+                  className={`px-4 py-2 text-sm font-medium rounded-r-lg border ${
+                    mode === 'oils'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                  }`}
+                >
+                  Масла
+                </button>
+              </div>
             </div>
           </div>
         </div>
         
+        {/* Панель истории */}
+        {showHistory && (
+          <div className="mb-6 border rounded-lg bg-gray-50 p-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-medium text-gray-900">История результатов</h3>
+              <div className="flex space-x-2">
+                <button
+                  type="button"
+                  onClick={clearHistory}
+                  className="text-sm text-red-600 hover:text-red-800"
+                  disabled={history.length === 0}
+                >
+                  Очистить историю
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowHistory(false)}
+                  className="text-sm text-gray-600 hover:text-gray-800"
+                >
+                  Скрыть
+                </button>
+              </div>
+            </div>
+            
+            {history.length === 0 ? (
+              <p className="text-gray-500 text-center py-4">История пуста</p>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {history.map((item) => (
+                  <div
+                    key={item.id}
+                    className="p-3 bg-white border rounded-lg hover:bg-blue-50 cursor-pointer transition-colors"
+                    onClick={() => applyHistoryItem(item)}
+                  >
+                    <div className="flex justify-between items-start mb-1">
+                      <span className="text-sm font-medium text-gray-900 truncate">
+                        {item.result.length > 80 ? item.result.substring(0, 80) + '...' : item.result}
+                      </span>
+                      <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
+                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        item.mode === 'parts' 
+                          ? 'bg-blue-100 text-blue-800' 
+                          : 'bg-green-100 text-green-800'
+                      }`}>
+                        {item.mode === 'parts' ? 'Запчасти' : 'Масла'}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {new Date(item.timestamp).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        
         <div className="space-y-6">
-          {/* Основные поля (общие для обоих режимов) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {fieldConfigs.map(({ id, label, key }) => (
-              <div key={id}>
+              <div key={id} className="relative">
                 <label htmlFor={id} className="block mb-2 text-sm font-medium text-gray-700">
                   {label}
                 </label>
@@ -532,7 +823,7 @@ export default function App() {
                   id={id}
                   type="text"
                   value={fields[key]}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) => handleChange(key, e.target.value)}
+                  onChange={(e: ChangeEvent<HTMLInputElement>) => handleChange(key, e.target.value, e)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   placeholder={capitalizeWords(label)}
                 />
@@ -545,9 +836,7 @@ export default function App() {
             ))}
           </div>
 
-          {/* Контент в зависимости от режима */}
           {mode === 'parts' ? (
-            /* Модели, марки авто и годы выпуска (режим запчастей) */
             <div className="border-t pt-6">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium text-gray-900">Марка авто, модели и годы выпуска</h3>
@@ -570,7 +859,7 @@ export default function App() {
                   return (
                     <div key={pair.id} className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
                       <div className="flex-grow grid grid-cols-1 md:grid-cols-5 gap-4">
-                        <div className="col-span-1">
+                        <div className="col-span-1 relative">
                           <div className="flex items-center justify-between mb-1">
                             <label className="text-sm font-medium text-gray-700">
                               {`Марка авто ${modelYearPairs.length > 1 ? `#${index + 1}` : ''}`}
@@ -592,7 +881,7 @@ export default function App() {
                             type="text"
                             value={pair.carBrand}
                             onChange={(e: ChangeEvent<HTMLInputElement>) => 
-                              handleModelChange(pair.id, 'carBrand', e.target.value)
+                              handleModelChange(pair.id, 'carBrand', e.target.value, e)
                             }
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Например: VW или BMW"
@@ -603,7 +892,7 @@ export default function App() {
                               : 'Первая буква заглавная, остальные строчные. Двойные пробелы удаляются.'}
                           </p>
                         </div>
-                        <div>
+                        <div className="relative">
                           <label className="block mb-1 text-sm font-medium text-gray-700">
                             {`Модель ${modelYearPairs.length > 1 ? `#${index + 1}` : ''}`}
                           </label>
@@ -611,7 +900,7 @@ export default function App() {
                             type="text"
                             value={pair.model}
                             onChange={(e: ChangeEvent<HTMLInputElement>) => 
-                              handleModelChange(pair.id, 'model', e.target.value)
+                              handleModelChange(pair.id, 'model', e.target.value, e)
                             }
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Например: Passat или X5"
@@ -628,7 +917,7 @@ export default function App() {
                             type="text"
                             value={pair.yearFrom}
                             onChange={(e: ChangeEvent<HTMLInputElement>) => 
-                              handleModelChange(pair.id, 'yearFrom', e.target.value)
+                              handleModelChange(pair.id, 'yearFrom', e.target.value, e)
                             }
                             className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                               pairErrors.yearFrom ? 'border-red-500' : 'border-gray-300'
@@ -651,7 +940,7 @@ export default function App() {
                             type="text"
                             value={pair.yearTo}
                             onChange={(e: ChangeEvent<HTMLInputElement>) => 
-                              handleModelChange(pair.id, 'yearTo', e.target.value)
+                              handleModelChange(pair.id, 'yearTo', e.target.value, e)
                             }
                             className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
                               pairErrors.yearTo ? 'border-red-500' : 'border-gray-300'
@@ -683,49 +972,16 @@ export default function App() {
                     </div>
                   );
                 })}
-                
-                <div className="text-sm text-gray-500 mt-2">
-                  <p>Формат: {`[Марка] [Модель ГодОт->ГодДо]`}</p>
-                  <p className="mt-1">Примеры ввода и результата:</p>
-                  <ul className="list-disc pl-5 mt-1 space-y-1">
-                    <li>
-                      Ввод: <code className="text-xs">подшипник ступицы ЗАДНЕЙ</code><br/>
-                      Результат: <code className="text-xs">Подшипник ступицы ЗАДНЕЙ</code>
-                    </li>
-                    <li>
-                      Ввод: <code className="text-xs">M-TEX</code><br/>
-                      Результат: <code className="text-xs">"M-TEX"</code>
-                    </li>
-                    <li>
-                      Ввод: <code className="text-xs">VW</code>, модель: <code className="text-xs">passat B5</code><br/>
-                      Результат: <code className="text-xs">VW Passat B5 74-&quot;97</code>
-                    </li>
-                    <li>
-                      Ввод только марки: <code className="text-xs">VOLKSWAGEN</code> (без CAPS)<br/>
-                      Результат: <code className="text-xs">Volkswagen</code> (первая заглавная, остальные строчные)
-                    </li>
-                    <li>
-                      Ввод только марки: <code className="text-xs">VOLKSWAGEN</code> (с CAPS)<br/>
-                      Результат: <code className="text-xs">VOLKSWAGEN</code> (все заглавные сохраняются)
-                    </li>
-                    <li>
-                      Год: <code className="text-xs">1974</code> → <code className="text-xs">74</code><br/>
-                      Год: <code className="text-xs">2024</code> → <code className="text-xs">24</code><br/>
-                      Год: <code className="text-xs">05</code> → <code className="text-xs">05</code>
-                    </li>
-                  </ul>
-                </div>
               </div>
             </div>
           ) : (
-            /* Спецификация масла (режим масел) */
             <div className="border-t pt-6">
               <div className="mb-4">
                 <h3 className="text-lg font-medium text-gray-900 mb-4">Спецификация масла</h3>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {oilSpecConfigs.map(({ id, label, key, placeholder }) => (
-                    <div key={id}>
+                    <div key={id} className="relative">
                       <label htmlFor={id} className="block mb-2 text-sm font-medium text-gray-700">
                         {label}
                       </label>
@@ -733,7 +989,7 @@ export default function App() {
                         id={id}
                         type="text"
                         value={oilSpec[key]}
-                        onChange={(e: ChangeEvent<HTMLInputElement>) => handleOilSpecChange(key, e.target.value)}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) => handleOilSpecChange(key, e.target.value, e)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         placeholder={placeholder}
                       />
@@ -744,26 +1000,31 @@ export default function App() {
                   ))}
                 </div>
               </div>
-              
-              <div className="text-sm text-gray-500 mt-2">
-                <p>Формат: Масло [тип] "[бренд]" [вязкость] [спецификация] [объем]</p>
-                <p className="mt-1">Примеры ввода и результата:</p>
-                <ul className="list-disc pl-5 mt-1 space-y-1">
-                  <li>
-                    Ввод: Название: <code className="text-xs">Масло</code>, Брэнд: <code className="text-xs">Mobil</code><br/>
-                    Спецификация: <code className="text-xs">Моторное "HYUNDAI/XTeer" 15w40 HD 7000 CI-4 1л</code><br/>
-                    Результат: <code className="text-xs">Масло "Mobil" Моторное "HYUNDAI/XTeer" 15w40 HD 7000 CI-4 1л</code>
-                  </li>
-                  <li>
-                    Ввод: Название: <code className="text-xs">Масло трансмиссионное</code>, Брэнд: <code className="text-xs">Castrol</code><br/>
-                    Спецификация: <code className="text-xs">Трансмиссионное "Castrol" 75w90 GL-4 4л</code><br/>
-                    Результат: <code className="text-xs">Масло трансмиссионное "Castrol" Трансмиссионное "Castrol" 75w90 GL-4 4л</code>
-                  </li>
-                </ul>
-              </div>
             </div>
           )}
         </div>
+
+        {/* Автозаполнение */}
+        {showAutocomplete && (
+          <div 
+            className="fixed z-50 bg-white border border-gray-300 rounded-md shadow-lg max-h-48 overflow-y-auto"
+            style={{
+              top: showAutocomplete.position.top,
+              left: showAutocomplete.position.left,
+              minWidth: '200px'
+            }}
+          >
+            {showAutocomplete.values.map((value, index) => (
+              <div
+                key={index}
+                className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-100 last:border-b-0"
+                onClick={() => handleAutocompleteSelect(value)}
+              >
+                <div className="text-sm text-gray-700 truncate">{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="border-t pt-6 mt-8">
           <div className="flex items-center justify-between mb-4">
@@ -797,7 +1058,6 @@ export default function App() {
                 Копировать
               </button>
               
-              {/* Уведомление об успешном копировании */}
               {copySuccess && (
                 <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 px-3 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-md shadow-lg animate-fadeIn">
                   {copySuccess}
@@ -824,10 +1084,6 @@ export default function App() {
                         <div>
                           <p className="font-medium">Обнаружены двойные пробелы!</p>
                           <p className="mt-1">Двойные пробелы будут автоматически удалены при копировании.</p>
-                          <p className="mt-1 text-xs">
-                            • - видимый символ для пробела<br />
-                            <span className="bg-red-200 px-1 rounded">красный фон</span> - двойные пробелы
-                          </p>
                         </div>
                       </div>
                     </div>
@@ -837,35 +1093,6 @@ export default function App() {
                 'Заполните поля выше, чтобы увидеть результат...'
               )}
             </div>
-            {concatenatedResult && concatenatedResult !== 'Пожалуйста, исправьте ошибки валидации' && !hasDoubleSpaces && (
-              <div className="mt-2 text-sm text-gray-600">
-                <p>Пример полного ввода:</p>
-                <ul className="list-disc pl-5 mt-1 space-y-1">
-                  {mode === 'parts' ? (
-                    <>
-                      <li>Название: <code className="text-xs">подшипник ступицы ЗАДНЕЙ</code></li>
-                      <li>Брэнд: <code className="text-xs">M-TEX</code></li>
-                      <li>Марка авто: <code className="text-xs">VW</code> (с CAPS)</li>
-                      <li>Модель: <code className="text-xs">passat B5</code></li>
-                      <li>Год от: <code className="text-xs">1974</code></li>
-                      <li>Год до: <code className="text-xs">1997</code></li>
-                      <li className="font-medium">Результат: <code className="text-xs">Подшипник ступицы ЗАДНЕЙ &quot;M-TEX&quot; VW Passat B5 74-&gt;97</code></li>
-                    </>
-                  ) : (
-                    <>
-                      <li>Название: <code className="text-xs">Масло</code></li>
-                      <li>Брэнд: <code className="text-xs">Mobil</code></li>
-                      <li>Тип масла: <code className="text-xs">Моторное</code></li>
-                      <li>Брэнд масла: <code className="text-xs">HYUNDAI/XTeer</code></li>
-                      <li>Вязкость: <code className="text-xs">15w40</code></li>
-                      <li>Спецификация: <code className="text-xs">HD 7000 CI-4</code></li>
-                      <li>Объем: <code className="text-xs">1л</code></li>
-                      <li className="font-medium">Результат: <code className="text-xs">Масло &quot;Mobil&quot; моторное &quot;HYUNDAI/XTeer&quot; 15w40 HD 7000 CI-4 1л</code></li>
-                    </>
-                  )}
-                </ul>
-              </div>
-            )}
           </div>
         </div>
       </div>
