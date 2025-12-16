@@ -49,19 +49,34 @@ export default function App() {
   const [validationErrors, setValidationErrors] = useState<Record<string, ValidationErrors>>({});
   const [copySuccess, setCopySuccess] = useState<string>('');
 
-  // Функция для форматирования первого символа каждого слова в заглавную
+  // Функция для форматирования: первое слово - с заглавной буквы, остальные - как введены
   const capitalizeWords = (str: string): string => {
-    return str
-      .split(' ')
-      .map(word => {
-        if (word.length === 0) return '';
-        // Делаем первую букву заглавной, остальные оставляем как есть
-        return word.charAt(0).toUpperCase() + word.slice(1);
-      })
-      .join(' ');
+    if (str.length === 0) return str;
+    
+    // Разделяем строку на слова, сохраняя пробелы
+    const words = str.split(' ');
+    const result: string[] = [];
+    
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      if (word.length === 0) {
+        result.push('');
+        continue;
+      }
+      
+      if (i === 0) {
+        // Первое слово: делаем первую букву заглавной, остальные как есть
+        result.push(word.charAt(0).toUpperCase() + word.slice(1));
+      } else {
+        // Все остальные слова оставляем как есть
+        result.push(word);
+      }
+    }
+    
+    return result.join(' ');
   };
 
-  // Функция для автоматической коррекции ввода (первая буква каждого слова - заглавная)
+  // Функция для автоматической коррекции ввода (только первое слово с заглавной буквы)
   const formatFieldValue = (value: string): string => {
     return capitalizeWords(value);
   };
@@ -247,11 +262,11 @@ export default function App() {
           }
           
           if (yearFrom && yearTo) {
-            return `${modelName}ё ${yearFrom}->${yearTo}`;
+            return `${modelName} ${yearFrom}->${yearTo}`;
           } else if (yearFrom) {
-            return `${modelName}ё ${yearFrom}->`;
+            return `${modelName} ${yearFrom}->`;
           } else if (yearTo) {
-            return `${modelName}ё ->${yearTo}`;
+            return `${modelName} ->${yearTo}`;
           } else {
             return modelName;
           }
@@ -453,7 +468,7 @@ export default function App() {
                   placeholder={capitalizeWords(label)}
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Первая буква каждого слова будет заглавной, остальные - как введены.
+                  Только первое слово с заглавной буквы, остальные - как введены.
                   <br />
                   <span className="text-red-500">Двойные пробелы автоматически удаляются.</span>
                 </p>
@@ -500,7 +515,7 @@ export default function App() {
                             placeholder="Например: VW или BMW"
                           />
                           <p className="mt-1 text-xs text-gray-500">
-                            Первая буква заглавная. Двойные пробелы удаляются.
+                            Только первое слово с заглавной буквы. Двойные пробелы удаляются.
                           </p>
                         </div>
                         <div>
@@ -517,7 +532,7 @@ export default function App() {
                             placeholder="Например: Passat или X5"
                           />
                           <p className="mt-1 text-xs text-gray-500">
-                            Первая буква заглавная. Двойные пробелы удаляются.
+                            Только первое слово с заглавной буквы. Двойные пробелы удаляются.
                           </p>
                         </div>
                         <div>
@@ -585,12 +600,12 @@ export default function App() {
                 })}
                 
                 <div className="text-sm text-gray-500 mt-2">
-                  <p>Формат: {`[Марка] [Модельё ГодОт->ГодДо]`}</p>
+                  <p>Формат: {`[Марка] [Модель ГодОт->ГодДо]`}</p>
                   <p className="mt-1">Примеры ввода и результата:</p>
                   <ul className="list-disc pl-5 mt-1 space-y-1">
                     <li>
                       Ввод: <code className="text-xs">подшипник ступицы ЗАДНЕЙ</code><br/>
-                      Результат: <code className="text-xs">Подшипник Ступицы ЗАДНЕЙ</code>
+                      Результат: <code className="text-xs">Подшипник ступицы ЗАДНЕЙ</code>
                     </li>
                     <li>
                       Ввод: <code className="text-xs">M-TEX</code><br/>
@@ -598,7 +613,7 @@ export default function App() {
                     </li>
                     <li>
                       Ввод: <code className="text-xs">VW</code>, модель: <code className="text-xs">passat B5</code><br/>
-                      Результат: <code className="text-xs">VW Passat B5ё 74-&quot;97</code>
+                      Результат: <code className="text-xs">VW Passat B5 74-&quot;97</code>
                     </li>
                     <li>
                       Год: <code className="text-xs">1974</code> → <code className="text-xs">74</code><br/>
@@ -649,7 +664,7 @@ export default function App() {
                   <li>
                     Ввод: Название: <code className="text-xs">Масло трансмиссионное</code>, Брэнд: <code className="text-xs">Castrol</code><br/>
                     Спецификация: <code className="text-xs">Трансмиссионное "Castrol" 75w90 GL-4 4л</code><br/>
-                    Результат: <code className="text-xs">Масло Трансмиссионное "Castrol" Трансмиссионное "Castrol" 75w90 GL-4 4л</code>
+                    Результат: <code className="text-xs">Масло трансмиссионное "Castrol" Трансмиссионное "Castrol" 75w90 GL-4 4л</code>
                   </li>
                 </ul>
               </div>
@@ -741,7 +756,7 @@ export default function App() {
                       <li>Модель: <code className="text-xs">passat B5</code></li>
                       <li>Год от: <code className="text-xs">1974</code></li>
                       <li>Год до: <code className="text-xs">1997</code></li>
-                      <li className="font-medium">Результат: <code className="text-xs">Подшипник Ступицы ЗАДНЕЙ &quot;M-TEX&quot; VW Passat B5ё 74-&gt;97</code></li>
+                      <li className="font-medium">Результат: <code className="text-xs">Подшипник ступицы ЗАДНЕЙ &quot;M-TEX&quot; VW Passat B5 74-&gt;97</code></li>
                     </>
                   ) : (
                     <>
@@ -752,7 +767,7 @@ export default function App() {
                       <li>Вязкость: <code className="text-xs">15w40</code></li>
                       <li>Спецификация: <code className="text-xs">HD 7000 CI-4</code></li>
                       <li>Объем: <code className="text-xs">1л</code></li>
-                      <li className="font-medium">Результат: <code className="text-xs">Масло &quot;Mobil&quot; Моторное &quot;HYUNDAI/XTeer&quot; 15w40 HD 7000 CI-4 1л</code></li>
+                      <li className="font-medium">Результат: <code className="text-xs">Масло &quot;Mobil&quot; моторное &quot;HYUNDAI/XTeer&quot; 15w40 HD 7000 CI-4 1л</code></li>
                     </>
                   )}
                 </ul>
