@@ -11,6 +11,7 @@ interface ModelYearPair {
   yearFrom: string;
   yearTo: string;
   id: string;
+  keepUppercase?: boolean; // Флаг для сохранения заглавных букв
 }
 
 interface ValidationErrors {
@@ -35,7 +36,7 @@ export default function App() {
   });
 
   const [modelYearPairs, setModelYearPairs] = useState<ModelYearPair[]>([
-    { carBrand: '', model: '', yearFrom: '', yearTo: '', id: Date.now().toString() + '-0' }
+    { carBrand: '', model: '', yearFrom: '', yearTo: '', id: Date.now().toString() + '-0', keepUppercase: false }
   ]);
 
   const [oilSpec, setOilSpec] = useState<OilSpecification>({
@@ -74,6 +75,33 @@ export default function App() {
     }
     
     return result.join(' ');
+  };
+
+  // Функция для форматирования марки авто
+  const formatCarBrand = (str: string, keepUppercase: boolean = false): string => {
+    if (str.length === 0) return str;
+    
+    if (keepUppercase) {
+      // Если установлен флаг keepUppercase, оставляем все как есть (удаляем только лишние пробелы)
+      return str
+        .trim()
+        .replace(/\s{2,}/g, ' ');
+    }
+    
+    // Обычное форматирование: первая буква заглавная, остальные строчные
+    return str
+      .trim()
+      .split(' ')
+      .filter(word => word.length > 0)
+      .map((word, index) => {
+        if (index === 0) {
+          // Первое слово: первая буква заглавная, остальные строчные
+          return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        }
+        // Остальные слова оставляем как есть (для случаев типа "BMW M")
+        return word;
+      })
+      .join(' ');
   };
 
   // Функция для автоматической коррекции ввода (только первое слово с заглавной буквы)
@@ -130,9 +158,14 @@ export default function App() {
   const handleModelChange = (id: string, field: 'carBrand' | 'model' | 'yearFrom' | 'yearTo', value: string) => {
     let formattedValue = value;
     
-    // Форматируем только текстовые поля (carBrand и model)
-    if (field === 'carBrand' || field === 'model') {
-      // Удаляем двойные пробелы при вводе
+    // Форматируем только текстовые поля
+    if (field === 'carBrand') {
+      // Для марки авто: форматируем в зависимости от флага keepUppercase
+      const singleSpacedValue = value.replace(/\s{2,}/g, ' ');
+      const pair = modelYearPairs.find(p => p.id === id);
+      formattedValue = formatCarBrand(singleSpacedValue, pair?.keepUppercase);
+    } else if (field === 'model') {
+      // Для модели: только первое слово с заглавной буквы
       const singleSpacedValue = value.replace(/\s{2,}/g, ' ');
       formattedValue = formatFieldValue(singleSpacedValue);
     }
@@ -156,10 +189,26 @@ export default function App() {
     );
   };
 
+  // Функция для переключения режима CAPS для марки авто
+  const toggleUppercaseMode = (id: string) => {
+    setModelYearPairs(prev => 
+      prev.map(pair => 
+        pair.id === id 
+          ? { 
+              ...pair, 
+              keepUppercase: !pair.keepUppercase,
+              // При переключении переформатируем текущее значение
+              carBrand: formatCarBrand(pair.carBrand, !pair.keepUppercase)
+            } 
+          : pair
+      )
+    );
+  };
+
   const addModelYearPair = () => {
     setModelYearPairs(prev => [
       ...prev,
-      { carBrand: '', model: '', yearFrom: '', yearTo: '', id: Date.now().toString() + '-' + prev.length }
+      { carBrand: '', model: '', yearFrom: '', yearTo: '', id: Date.now().toString() + '-' + prev.length, keepUppercase: false }
     ]);
   };
 
@@ -203,11 +252,18 @@ export default function App() {
 
   // Функция для удаления двойных пробелов в строке
   const removeDoubleSpaces = (str: string): string => {
-    return str.replace(/\s{2,}/g, ' ');
+    return str.replace(/\s{2,}/g, ' ').trim();
   };
 
   // Group by carBrand and format - для режима запчастей
   const formatModelYearPairs = () => {
+    // Filter out pairs where both carBrand and model are empty
+    const validPairs = modelYearPairs.filter(pair => 
+      removeDoubleSpaces(pair.carBrand) !== '' || removeDoubleSpaces(pair.model) !== ''
+    );
+    
+    if (validPairs.length === 0) return '';
+    
     // Group pairs by carBrand
     const groupedByBrand: Record<string, Array<{
       model: string, 
@@ -217,25 +273,32 @@ export default function App() {
       originalYearTo: string
     }>> = {};
     
-    modelYearPairs.forEach(pair => {
-      // Удаляем двойные пробелы в марке и модели
-      const carBrand = removeDoubleSpaces(pair.carBrand.trim());
-      const model = removeDoubleSpaces(pair.model.trim());
+    validPairs.forEach(pair => {
+      // Удаляем двойные пробелы и обрезаем
+      const carBrand = removeDoubleSpaces(pair.carBrand);
+      const model = removeDoubleSpaces(pair.model);
       
-      if (model !== '' || carBrand !== '') {
-        const brand = carBrand || '';
-        if (!groupedByBrand[brand]) {
-          groupedByBrand[brand] = [];
-        }
-        if (model) {
-          groupedByBrand[brand].push({
-            model: model,
-            yearFrom: formatYearForDisplay(pair.yearFrom),
-            yearTo: formatYearForDisplay(pair.yearTo),
-            originalYearFrom: pair.yearFrom,
-            originalYearTo: pair.yearTo
-          });
-        }
+      const brand = carBrand || '';
+      if (!groupedByBrand[brand]) {
+        groupedByBrand[brand] = [];
+      }
+      if (model) {
+        groupedByBrand[brand].push({
+          model: model,
+          yearFrom: formatYearForDisplay(pair.yearFrom),
+          yearTo: formatYearForDisplay(pair.yearTo),
+          originalYearFrom: pair.yearFrom,
+          originalYearTo: pair.yearTo
+        });
+      } else {
+        // Если модель пустая, добавляем пустую модель для отображения только марки
+        groupedByBrand[brand].push({
+          model: '',
+          yearFrom: formatYearForDisplay(pair.yearFrom),
+          yearTo: formatYearForDisplay(pair.yearTo),
+          originalYearFrom: pair.yearFrom,
+          originalYearTo: pair.yearTo
+        });
       }
     });
 
@@ -243,16 +306,19 @@ export default function App() {
     const result: string[] = [];
     
     Object.entries(groupedByBrand).forEach(([brand, models]) => {
-      if (models.length === 0) {
-        // If only brand is specified without models
+      // Filter out empty models
+      const nonEmptyModels = models.filter(m => m.model !== '');
+      
+      if (nonEmptyModels.length === 0 && brand !== '') {
+        // Если есть только марка без моделей
         result.push(brand);
-      } else {
+      } else if (nonEmptyModels.length > 0) {
         // Format each model for this brand
-        const formattedModels = models.map(modelData => {
+        const formattedModels = nonEmptyModels.map(modelData => {
           const { model: modelName, yearFrom, yearTo } = modelData;
           
           // Проверяем есть ли ошибки валидации для этой модели
-          const hasErrors = models.some(m => 
+          const hasErrors = nonEmptyModels.some(m => 
             (m.originalYearFrom && validateYear(m.originalYearFrom)) || 
             (m.originalYearTo && validateYear(m.originalYearTo))
           );
@@ -274,13 +340,21 @@ export default function App() {
         
         // Join models and prepend brand if there are multiple models or multiple brands
         const hasMultipleBrands = Object.keys(groupedByBrand).length > 1;
-        const hasMultipleModels = models.length > 1;
+        const hasMultipleModels = nonEmptyModels.length > 1;
         
         if (hasMultipleBrands || hasMultipleModels) {
-          result.push(`${brand} ${formattedModels.join(', ')}`);
+          if (brand) {
+            result.push(`${brand} ${formattedModels.join(', ')}`);
+          } else {
+            result.push(formattedModels.join(', '));
+          }
         } else {
-          // Single brand, single model - brand is shown only once at the beginning
-          result.push(formattedModels[0]);
+          // Single brand, single model
+          if (brand) {
+            result.push(`${brand} ${formattedModels[0]}`);
+          } else {
+            result.push(formattedModels[0]);
+          }
         }
       }
     });
@@ -306,7 +380,7 @@ export default function App() {
   const getCarBrandForConcatenation = () => {
     const uniqueBrands = Array.from(new Set(
       modelYearPairs
-        .map(pair => removeDoubleSpaces(pair.carBrand.trim()))
+        .map(pair => removeDoubleSpaces(pair.carBrand))
         .filter(brand => brand !== '')
     ));
 
@@ -333,35 +407,30 @@ export default function App() {
     
     const parts: string[] = [];
     
-    // Для полей name и brand сохраняем форматирование (уже сделано в handleChange)
-    // Удаляем двойные пробелы
-    const name = removeDoubleSpaces(fields.name.trim());
-    const brand = removeDoubleSpaces(fields.brand.trim());
+    // Удаляем двойные пробелы и обрезаем
+    const name = removeDoubleSpaces(fields.name);
+    const brand = removeDoubleSpaces(fields.brand);
     
     if (name) parts.push(name);
     if (brand) parts.push(`"${brand}"`);
     
-    // Add car brand if it's the same for all models
-    const carBrand = getCarBrandForConcatenation();
+    // Add model year pairs
     const modelYearStr = formatModelYearPairs();
     
-    if (carBrand && !modelYearStr.includes(carBrand)) {
-      parts.push(carBrand);
+    if (modelYearStr) {
+      parts.push(modelYearStr);
     }
     
-    if (modelYearStr) parts.push(modelYearStr);
-    
-    return parts.join(' ');
+    return removeDoubleSpaces(parts.join(' '));
   };
 
   // Concatenation logic for oils mode
   const concatenatedResultForOils = () => {
     const parts: string[] = [];
     
-    // Форматируем название и бренд так же как в режиме запчастей
-    // Удаляем двойные пробелы
-    const name = removeDoubleSpaces(fields.name.trim());
-    const brand = removeDoubleSpaces(fields.brand.trim());
+    // Удаляем двойные пробелы и обрезаем
+    const name = removeDoubleSpaces(fields.name);
+    const brand = removeDoubleSpaces(fields.brand);
     
     if (name) parts.push(name);
     if (brand) parts.push(`"${brand}"`);
@@ -370,7 +439,7 @@ export default function App() {
     const oilSpecStr = formatOilSpecification();
     if (oilSpecStr) parts.push(oilSpecStr);
     
-    return parts.join(' ');
+    return removeDoubleSpaces(parts.join(' '));
   };
 
   // Общий результат в зависимости от режима
@@ -500,11 +569,25 @@ export default function App() {
                   
                   return (
                     <div key={pair.id} className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                      <div className="flex-grow grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <div>
-                          <label className="block mb-1 text-sm font-medium text-gray-700">
-                            {`Марка авто ${modelYearPairs.length > 1 ? `#${index + 1}` : ''}`}
-                          </label>
+                      <div className="flex-grow grid grid-cols-1 md:grid-cols-5 gap-4">
+                        <div className="col-span-1">
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-sm font-medium text-gray-700">
+                              {`Марка авто ${modelYearPairs.length > 1 ? `#${index + 1}` : ''}`}
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => toggleUppercaseMode(pair.id)}
+                              className={`text-xs px-2 py-1 rounded transition-colors ${
+                                pair.keepUppercase
+                                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                              }`}
+                              title={pair.keepUppercase ? "Отключить CAPS" : "Оставить CAPS"}
+                            >
+                              {pair.keepUppercase ? 'CAPS ВКЛ' : 'CAPS'}
+                            </button>
+                          </div>
                           <input
                             type="text"
                             value={pair.carBrand}
@@ -515,7 +598,9 @@ export default function App() {
                             placeholder="Например: VW или BMW"
                           />
                           <p className="mt-1 text-xs text-gray-500">
-                            Только первое слово с заглавной буквы. Двойные пробелы удаляются.
+                            {pair.keepUppercase 
+                              ? 'Заглавные буквы сохраняются. Двойные пробелы удаляются.' 
+                              : 'Первая буква заглавная, остальные строчные. Двойные пробелы удаляются.'}
                           </p>
                         </div>
                         <div>
@@ -614,6 +699,14 @@ export default function App() {
                     <li>
                       Ввод: <code className="text-xs">VW</code>, модель: <code className="text-xs">passat B5</code><br/>
                       Результат: <code className="text-xs">VW Passat B5 74-&quot;97</code>
+                    </li>
+                    <li>
+                      Ввод только марки: <code className="text-xs">VOLKSWAGEN</code> (без CAPS)<br/>
+                      Результат: <code className="text-xs">Volkswagen</code> (первая заглавная, остальные строчные)
+                    </li>
+                    <li>
+                      Ввод только марки: <code className="text-xs">VOLKSWAGEN</code> (с CAPS)<br/>
+                      Результат: <code className="text-xs">VOLKSWAGEN</code> (все заглавные сохраняются)
                     </li>
                     <li>
                       Год: <code className="text-xs">1974</code> → <code className="text-xs">74</code><br/>
@@ -752,7 +845,7 @@ export default function App() {
                     <>
                       <li>Название: <code className="text-xs">подшипник ступицы ЗАДНЕЙ</code></li>
                       <li>Брэнд: <code className="text-xs">M-TEX</code></li>
-                      <li>Марка авто: <code className="text-xs">VW</code></li>
+                      <li>Марка авто: <code className="text-xs">VW</code> (с CAPS)</li>
                       <li>Модель: <code className="text-xs">passat B5</code></li>
                       <li>Год от: <code className="text-xs">1974</code></li>
                       <li>Год до: <code className="text-xs">1997</code></li>
